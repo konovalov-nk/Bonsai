@@ -15,3 +15,7 @@
 
 #Temporary editor files
 *~
+
+# Build directories
+/build/
+/build-headless/
