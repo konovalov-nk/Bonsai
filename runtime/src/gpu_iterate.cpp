@@ -10,6 +10,12 @@ using namespace std;
 static double de_max  = 0;
 static double dde_max = 0;
 
+void octree::resetEnergyStats()
+{
+  de_max  = 0;
+  dde_max = 0;
+}
+
 
 cudaEvent_t startLocalGrav;
 cudaEvent_t startRemoteGrav;

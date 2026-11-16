@@ -469,6 +469,12 @@ public:
     void getBoundariesGroups(tree_structure &tree, real4 &r_min, real4 &r_max);  
 
     void allocateParticleMemory(tree_structure &tree);
+    bool reloadParticles(const std::vector<real4> &bodyPositions,
+                         const std::vector<real4> &bodyVelocities,
+                         const std::vector<ullong> &bodyIDs,
+                         float t0);
+    bool loadSnapshot(const std::string &path);
+    void resetEnergyStats();
     void allocateTreePropMemory(tree_structure &tree);
     void reallocateParticleMemory(tree_structure &tree);
 

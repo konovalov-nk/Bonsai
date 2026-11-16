@@ -95,6 +95,82 @@ void octree::allocateParticleMemory(tree_structure &tree)
 }
 
 
+bool octree::reloadParticles(const std::vector<real4> &bodyPositions,
+                             const std::vector<real4> &bodyVelocities,
+                             const std::vector<ullong> &bodyIDs,
+                             float t0)
+{
+  const size_t n = bodyPositions.size();
+  if (n == 0 || bodyVelocities.size() != n || bodyIDs.size() != n)
+    return false;
+  if (n > (size_t)2147483647)
+    return false;
+
+  //Stop any pending tree/renderer work before freeing the old buffers.
+  CU_SAFE_CALL(cudaDeviceSynchronize());
+
+  localTree.setN((int)n);
+  allocateParticleMemory(localTree);
+
+  for (size_t i = 0; i < n; ++i)
+  {
+    localTree.bodies_pos[i]  = bodyPositions[i];
+    localTree.bodies_Ppos[i] = bodyPositions[i];
+    localTree.bodies_vel[i]  = bodyVelocities[i];
+    localTree.bodies_Pvel[i] = bodyVelocities[i];
+    localTree.bodies_ids[i]  = bodyIDs[i];
+    localTree.bodies_time[i] = make_float2(t0, t0);
+  }
+
+  localTree.bodies_time.h2d();
+  localTree.bodies_pos. h2d();
+  localTree.bodies_vel. h2d();
+  localTree.bodies_Ppos.h2d();
+  localTree.bodies_Pvel.h2d();
+  localTree.bodies_ids. h2d();
+
+  iter            = 0;
+  t_current       = t_previous = t0;
+  nextSnapTime    = (snapshotIter > 0) ? t0 + snapshotIter : 0;
+  nextQuickDump   = 0;
+  nextStatsTime   = 0;
+
+  localTree.n_leafs            = 0;
+  localTree.n_nodes            = 0;
+  localTree.n_groups           = 0;
+  localTree.n_levels           = 0;
+  localTree.n_active_groups    = 0;
+  localTree.n_active_particles = 0;
+  localTree.startLevelMin      = 0;
+
+  mpiSumParticleCount((int)n);
+  resetEnergy();
+  resetEnergyStats();
+
+  //Recompute keys and global boundaries for the new particle set.
+  iterate_setup();
+  return true;
+}
+
+bool octree::loadSnapshot(const std::string &path)
+{
+  std::vector<real4>  positions;
+  std::vector<real4>  velocities;
+  std::vector<ullong> ids;
+  float t0 = 0;
+
+  fileIO->readFile(mpiCommWorld, positions, velocities, ids, path,
+                   procId, nProcs, t0, 1, false);
+
+  if (positions.empty())
+  {
+    fprintf(stderr, "Failed to read snapshot '%s'\n", path.c_str());
+    return false;
+  }
+  return reloadParticles(positions, velocities, ids, t0);
+}
+
+
 void octree::reallocateParticleMemory(tree_structure &tree)
 {
   //Reallocate the memory to hold the particles data
