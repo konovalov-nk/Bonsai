@@ -26,12 +26,8 @@
 #include <string>
 #include <filesystem>
 #include <ctime>
-#include <unistd.h>
 
 namespace fs = std::filesystem;
-
-extern int devID;
-extern int renderDevID;
 
 
 #include "render_particles.h"
@@ -40,6 +36,13 @@ extern int renderDevID;
 #include "timer.h"
 #include "paramgl.h"
 #include "depthSort.h"
+
+extern void bonsaiGeneratePlummerModel(std::vector<real4> &pos, std::vector<real4> &vel,
+                                       std::vector<ullong> &ids, int procId, int nProcs, int n);
+extern void bonsaiGenerateSphereModel(std::vector<real4> &pos, std::vector<real4> &vel,
+                                      std::vector<ullong> &ids, int procId, int nProcs, int n);
+extern void bonsaiGenerateCubeModel(std::vector<real4> &pos, std::vector<real4> &vel,
+                                    std::vector<ullong> &ids, int procId, int nProcs, int n);
 
 #include "tr.h"
 
@@ -697,7 +700,7 @@ public:
     switch (key) {
     case 13:
     case 10:
-      restartWithIC();
+      loadSelectedIC();
       break;
     case 27:
       m_icMenu = false;
@@ -712,58 +715,48 @@ public:
     }
   }
 
-  void restartWithIC() {
+  void loadSelectedIC() {
     const ICChoice *ic = selectedIC();
     if (!ic) {
       setStatus("No initial condition selected");
       return;
     }
 
-    // Keep the current slider values across the restart.
-    writeParams(m_renderer.getParams(), m_paramsFile.c_str());
-
-    char dtBuf[64], tEndBuf[64];
-    snprintf(dtBuf, sizeof(dtBuf), "%.10g", m_tree->getTimeStep());
-    snprintf(tEndBuf, sizeof(tEndBuf), "%.10g", m_tree->getTEnd());
-
-    std::string exePath = "/proc/self/exe";
-    std::error_code ec;
-    fs::path self = fs::read_symlink("/proc/self/exe", ec);
-    if (!ec) exePath = self.string();
-
-    std::vector<std::string> args;
-    args.push_back(exePath);
-    args.push_back("--dev");       args.push_back(std::to_string(devID));
-    args.push_back("--renderdev"); args.push_back(std::to_string(renderDevID));
-    args.push_back("--params");    args.push_back(m_paramsFile);
-    args.push_back("--presetdir"); args.push_back(m_presetDir);
-    if (!m_icDir.empty()) {
-      args.push_back("--icdir");
-      args.push_back(m_icDir);
-    }
-    args.push_back("-t"); args.push_back(dtBuf);
-    args.push_back("-T"); args.push_back(tEndBuf);
-    if (m_tree->getUseDirectGravity()) args.push_back("--direct");
-    if (displayFps) args.push_back("--displayfps");
+    std::vector<real4>  positions;
+    std::vector<real4>  velocities;
+    std::vector<ullong> ids;
+    bool ok = false;
 
     if (ic->kind == "snapshot") {
-      args.push_back("-i");
-      args.push_back(ic->path);
-    } else {
-      args.push_back("--" + ic->kind);
-      args.push_back(std::to_string(ic->n));
+      ok = m_tree->loadSnapshot(ic->path);
+    } else if (ic->kind == "plummer") {
+      bonsaiGeneratePlummerModel(positions, velocities, ids, m_tree->procId, m_tree->nProcs, ic->n);
+      ok = m_tree->reloadParticles(positions, velocities, ids, 0.0f);
+    } else if (ic->kind == "sphere") {
+      bonsaiGenerateSphereModel(positions, velocities, ids, m_tree->procId, m_tree->nProcs, ic->n);
+      ok = m_tree->reloadParticles(positions, velocities, ids, 0.0f);
+    } else if (ic->kind == "cube") {
+      bonsaiGenerateCubeModel(positions, velocities, ids, m_tree->procId, m_tree->nProcs, ic->n);
+      ok = m_tree->reloadParticles(positions, velocities, ids, 0.0f);
     }
 
-    std::vector<char *> argv;
-    for (size_t i = 0; i < args.size(); ++i)
-      argv.push_back(const_cast<char *>(args[i].c_str()));
-    argv.push_back(NULL);
+    if (!ok) {
+      setStatus("Failed to load: " + ic->label);
+      return;
+    }
 
-    printf("Restarting with: %s\n", ic->label.c_str());
-    fflush(NULL);
-    execv(exePath.c_str(), argv.data());
-    perror("execv");
-    setStatus("Restart failed");
+    m_renderer.setNumberOfParticles((uint)m_tree->localTree.n);
+    initBodyColors();
+    fitCamera();
+
+    m_idata = octree::IterationData();
+    iterationsRemaining = true;
+    m_paused = false;
+    m_supernova = false;
+    m_currentIC = ic->label;
+    m_icMenu = false;
+    refreshICs();
+    setStatus("Loaded in place: " + ic->label);
   }
 
 
@@ -895,7 +888,7 @@ public:
     glPrint(x, y, "j          switch slider page (render / color + dt)", GLUT_BITMAP_9_BY_15); y -= line;
     glPrint(x, y, "t / T      halve / double simulation dt", GLUT_BITMAP_9_BY_15);            y -= line;
     glPrint(x, y, "F9         preset browser: load / save / new", GLUT_BITMAP_9_BY_15);       y -= line;
-    glPrint(x, y, "F10        initial conditions: restart with another IC", GLUT_BITMAP_9_BY_15); y -= line;
+    glPrint(x, y, "F10        initial conditions: load another IC in place", GLUT_BITMAP_9_BY_15); y -= line;
     glPrint(x, y, "D          save settings to selected preset", GLUT_BITMAP_9_BY_15);        y -= line;
     glPrint(x, y, "p          cycle particle drawing mode", GLUT_BITMAP_9_BY_15);             y -= line;
     glPrint(x, y, "b          toggle octree boxes", GLUT_BITMAP_9_BY_15);                     y -= line;
@@ -1073,10 +1066,10 @@ public:
     int px = (int)(winW * 0.10f);
     glColor3f(0.75f, 0.80f, 0.85f);
     glPrint(px, (int)(winH * 0.18f),
-            "Up/Down select   Enter restart   r reload   Esc/F10 close",
+            "Up/Down select   Enter load in place   r reload   Esc/F10 close",
             GLUT_BITMAP_9_BY_15);
     glPrint(px, (int)(winH * 0.15f),
-            "Restart reloads the simulation with the selected IC and current preset.",
+            "No process restart: frees the old tree and loads the selected IC.",
             GLUT_BITMAP_9_BY_15);
 
     if (!m_statusMsg.empty() && GetTimer() < m_statusUntil) {

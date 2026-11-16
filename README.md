@@ -62,7 +62,8 @@ inside the app to switch presets and `D` to save the current settings.
 Initial conditions can be switched at runtime with `F10`: the browser
 lists `.tipsy` files from `inputExamples/` and the built-in Plummer,
 Sphere, and Cube generators (10k, 100k, 1M bodies). Selecting one
-restarts the process with the current preset, dt, and tEnd.
+frees the old tree and loads the new particles in place, keeping the
+current preset, dt, and tEnd.
 
 Bonsai demo keys
 ----------------

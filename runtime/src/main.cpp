@@ -78,6 +78,22 @@ http://github.com/treecode/Bonsai
 
 using namespace std;
 
+//ICGenerators.h defines non-inline functions; wrap them here so renderloop can
+//call the generators without pulling in a second definition.
+void bonsaiGeneratePlummerModel(vector<real4> &pos, vector<real4> &vel,
+                                vector<ullong> &ids, int procId, int nProcs, int n) {
+  generatePlummerModel(pos, vel, ids, procId, nProcs, n);
+}
+void bonsaiGenerateSphereModel(vector<real4> &pos, vector<real4> &vel,
+                               vector<ullong> &ids, int procId, int nProcs, int n) {
+  generateSphereModel(pos, vel, ids, procId, nProcs, n);
+}
+void bonsaiGenerateCubeModel(vector<real4> &pos, vector<real4> &vel,
+                             vector<ullong> &ids, int procId, int nProcs, int n) {
+  generateCubeModel(pos, vel, ids, procId, nProcs, n);
+}
+
+
 #include "../profiling/bonsai_timing.h"
 
 int devID;
