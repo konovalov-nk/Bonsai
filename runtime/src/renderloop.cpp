@@ -26,8 +26,12 @@
 #include <string>
 #include <filesystem>
 #include <ctime>
+#include <unistd.h>
 
 namespace fs = std::filesystem;
+
+extern int devID;
+extern int renderDevID;
 
 
 #include "render_particles.h"
@@ -318,9 +322,17 @@ void glPrintf(float x, float y, const char* format, ...)
 class BonsaiDemo
 {
 public:
+  struct ICChoice {
+    std::string label;
+    std::string kind;
+    std::string path;
+    int n;
+  };
+
   BonsaiDemo(octree *tree, octree::IterationData &idata,
              const std::string &paramsFile, const std::string &colorParamsFile,
-             const std::string &presetDir)
+             const std::string &presetDir, const std::string &icDir,
+             const std::string &icLabel)
     : m_tree(tree), m_idata(idata), iterationsRemaining(true),
 //       m_renderer(tree->localTree.n + tree->localTree.n_dust),
       m_renderer(tree->localTree.n, MAX_PARTICLES),
@@ -366,6 +378,10 @@ public:
       m_prevDisplayHelp(false),
       m_prevPresetMenu(false),
       m_prevEnableStats(false),
+      m_icDir(icDir),
+      m_currentIC(icLabel),
+      m_icIndex(0),
+      m_icMenu(false),
       m_statusUntil(0.0)
   {
     m_windowDims = make_int2(WINDOWW, WINDOWH);
@@ -409,6 +425,9 @@ public:
         m_presetDir = "../presets";
     }
     refreshPresets();
+
+    if (m_icDir.empty()) m_icDir = "../inputExamples";
+    refreshICs();
 
     cudaEventCreate(&startEvent, 0);
     cudaEventCreate(&stopEvent, 0);
@@ -523,6 +542,8 @@ public:
     m_presetMenu = !m_presetMenu;
     m_presetNameInput = false;
     if (m_presetMenu) {
+      m_icMenu = false;
+      m_displayHelp = false;
       refreshPresets();
       setStatus("Preset browser opened");
     }
@@ -622,6 +643,130 @@ public:
       break;
     }
   }
+  void refreshICs() {
+    m_ics.clear();
+    std::error_code ec;
+    fs::path dir(m_icDir);
+    std::vector<ICChoice> snapshots;
+    if (!m_icDir.empty() && fs::is_directory(dir, ec)) {
+      for (const auto &entry : fs::directory_iterator(dir, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".tipsy") {
+          std::string name = entry.path().stem().string();
+          snapshots.push_back({name, "snapshot", entry.path().string(), 0});
+        }
+      }
+    }
+    std::sort(snapshots.begin(), snapshots.end(),
+              [](const ICChoice &a, const ICChoice &b) { return a.label < b.label; });
+    m_ics.insert(m_ics.end(), snapshots.begin(), snapshots.end());
+
+    const int sizes[] = {10000, 100000, 1000000};
+    for (int n : sizes)
+      m_ics.push_back({"Plummer " + std::to_string(n) + " bodies", "plummer", "", n});
+    for (int n : sizes)
+      m_ics.push_back({"Sphere " + std::to_string(n) + " bodies", "sphere", "", n});
+    for (int n : sizes)
+      m_ics.push_back({"Cube " + std::to_string(n) + " bodies", "cube", "", n});
+
+    m_icIndex = m_ics.empty() ? -1 : 0;
+    for (size_t i = 0; i < m_ics.size(); ++i) {
+      if (m_ics[i].label == m_currentIC) {
+        m_icIndex = (int)i;
+        break;
+      }
+    }
+  }
+
+  const ICChoice *selectedIC() const {
+    if (m_icIndex < 0 || m_icIndex >= (int)m_ics.size()) return NULL;
+    return &m_ics[m_icIndex];
+  }
+
+  void toggleICMenu() {
+    if (m_uiHidden) toggleUI();
+    m_icMenu = !m_icMenu;
+    if (m_icMenu) {
+      m_presetMenu = false;
+      m_displayHelp = false;
+      refreshICs();
+      setStatus("Initial conditions browser opened");
+    }
+  }
+
+  void handleICMenuKey(unsigned char key) {
+    switch (key) {
+    case 13:
+    case 10:
+      restartWithIC();
+      break;
+    case 27:
+      m_icMenu = false;
+      break;
+    case 'r':
+    case 'R':
+      refreshICs();
+      setStatus("Initial condition list reloaded");
+      break;
+    default:
+      break;
+    }
+  }
+
+  void restartWithIC() {
+    const ICChoice *ic = selectedIC();
+    if (!ic) {
+      setStatus("No initial condition selected");
+      return;
+    }
+
+    // Keep the current slider values across the restart.
+    writeParams(m_renderer.getParams(), m_paramsFile.c_str());
+
+    char dtBuf[64], tEndBuf[64];
+    snprintf(dtBuf, sizeof(dtBuf), "%.10g", m_tree->getTimeStep());
+    snprintf(tEndBuf, sizeof(tEndBuf), "%.10g", m_tree->getTEnd());
+
+    std::string exePath = "/proc/self/exe";
+    std::error_code ec;
+    fs::path self = fs::read_symlink("/proc/self/exe", ec);
+    if (!ec) exePath = self.string();
+
+    std::vector<std::string> args;
+    args.push_back(exePath);
+    args.push_back("--dev");       args.push_back(std::to_string(devID));
+    args.push_back("--renderdev"); args.push_back(std::to_string(renderDevID));
+    args.push_back("--params");    args.push_back(m_paramsFile);
+    args.push_back("--presetdir"); args.push_back(m_presetDir);
+    if (!m_icDir.empty()) {
+      args.push_back("--icdir");
+      args.push_back(m_icDir);
+    }
+    args.push_back("-t"); args.push_back(dtBuf);
+    args.push_back("-T"); args.push_back(tEndBuf);
+    if (m_tree->getUseDirectGravity()) args.push_back("--direct");
+    if (displayFps) args.push_back("--displayfps");
+
+    if (ic->kind == "snapshot") {
+      args.push_back("-i");
+      args.push_back(ic->path);
+    } else {
+      args.push_back("--" + ic->kind);
+      args.push_back(std::to_string(ic->n));
+    }
+
+    std::vector<char *> argv;
+    for (size_t i = 0; i < args.size(); ++i)
+      argv.push_back(const_cast<char *>(args[i].c_str()));
+    argv.push_back(NULL);
+
+    printf("Restarting with: %s\n", ic->label.c_str());
+    fflush(NULL);
+    execv(exePath.c_str(), argv.data());
+    perror("execv");
+    setStatus("Restart failed");
+  }
+
+
   void toggleBoxes() { m_displayBoxes = !m_displayBoxes; }
   void toggleSliders() { m_displaySliders = !m_displaySliders; }
   void toggleGlow() { m_enableGlow = !m_enableGlow; m_renderer.setEnableFilters(m_enableGlow); }
@@ -713,7 +858,7 @@ public:
     glRectf(10.0f, 10.0f, (float)W - 10.0f, 70.0f);
 
     glColor3f(0.72f, 0.84f, 1.0f);
-    glPrint(20, 52, "F9 presets | h sliders | j params | space pause | t/T dt | D save | / hide UI | ? help",
+    glPrint(20, 52, "F9 presets | F10 ICs | h sliders | j params | space pause | t/T dt | D save | / hide UI | ? help",
             GLUT_BITMAP_9_BY_15);
     char buf[512];
     snprintf(buf, sizeof(buf), "preset: %s    dt: %g",
@@ -750,6 +895,7 @@ public:
     glPrint(x, y, "j          switch slider page (render / color + dt)", GLUT_BITMAP_9_BY_15); y -= line;
     glPrint(x, y, "t / T      halve / double simulation dt", GLUT_BITMAP_9_BY_15);            y -= line;
     glPrint(x, y, "F9         preset browser: load / save / new", GLUT_BITMAP_9_BY_15);       y -= line;
+    glPrint(x, y, "F10        initial conditions: restart with another IC", GLUT_BITMAP_9_BY_15); y -= line;
     glPrint(x, y, "D          save settings to selected preset", GLUT_BITMAP_9_BY_15);        y -= line;
     glPrint(x, y, "p          cycle particle drawing mode", GLUT_BITMAP_9_BY_15);             y -= line;
     glPrint(x, y, "b          toggle octree boxes", GLUT_BITMAP_9_BY_15);                     y -= line;
@@ -860,6 +1006,88 @@ public:
     endWinCoords();
   }
 
+  void drawICMenu()
+  {
+    if (!m_icMenu) return;
+
+    beginDeviceCoords();
+    glScalef(0.25f, 0.25f, 1.0f);
+
+    const float W = glutGet(GLUT_WINDOW_WIDTH) * 4.0f;
+    const float H = glutGet(GLUT_WINDOW_HEIGHT) * 4.0f;
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.01f, 0.02f, 0.04f, 1.0f);
+    glRectf(W * 0.02f, H * 0.02f, W * 0.98f, H * 0.98f);
+
+    float x = W * 0.10f;
+    float y = H * 0.88f;
+    const float line = 150.0f;
+
+    glColor3f(0.40f, 0.80f, 1.00f);
+    glPrintf(x, y, "INITIAL CONDITIONS");
+    y -= line * 1.2f;
+
+    glColor3f(0.60f, 0.66f, 0.72f);
+    glPrintf(x, y, "%s", m_icDir.c_str());
+    y -= line;
+
+    glColor3f(0.65f, 0.72f, 0.80f);
+    glPrintf(x, y, "current: %s", m_currentIC.c_str());
+    y -= line * 1.2f;
+
+    if (m_ics.empty()) {
+      glColor3f(1.0f, 0.6f, 0.4f);
+      glPrintf(x, y, "No .tipsy snapshots found");
+    } else {
+      const int n = (int)m_ics.size();
+      int maxRows = std::max(1, (int)((H * 0.50f) / line));
+      int start = std::max(0, m_icIndex - maxRows / 2);
+      if (start + maxRows > n) start = std::max(0, n - maxRows);
+
+      for (int i = start; i < n && i < start + maxRows; ++i) {
+        const bool selected = (i == m_icIndex);
+        const bool current  = (m_ics[i].label == m_currentIC);
+        if (selected)      glColor3f(1.00f, 0.85f, 0.20f);
+        else if (current)  glColor3f(0.40f, 1.00f, 0.40f);
+        else               glColor3f(0.80f, 0.80f, 0.80f);
+        glPrintf(x, y, "%s %s%s",
+                 selected ? ">" : " ",
+                 m_ics[i].label.c_str(),
+                 current ? " *" : "");
+        y -= line;
+      }
+    }
+
+    glDisable(GL_BLEND);
+    endWinCoords();
+
+    const int winW = glutGet(GLUT_WINDOW_WIDTH);
+    const int winH = glutGet(GLUT_WINDOW_HEIGHT);
+    beginDeviceCoords();
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    int px = (int)(winW * 0.10f);
+    glColor3f(0.75f, 0.80f, 0.85f);
+    glPrint(px, (int)(winH * 0.18f),
+            "Up/Down select   Enter restart   r reload   Esc/F10 close",
+            GLUT_BITMAP_9_BY_15);
+    glPrint(px, (int)(winH * 0.15f),
+            "Restart reloads the simulation with the selected IC and current preset.",
+            GLUT_BITMAP_9_BY_15);
+
+    if (!m_statusMsg.empty() && GetTimer() < m_statusUntil) {
+      glColor3f(0.40f, 1.00f, 0.50f);
+      glPrint(px, (int)(winH * 0.10f), m_statusMsg.c_str(), GLUT_BITMAP_9_BY_15);
+    }
+
+    glDisable(GL_BLEND);
+    endWinCoords();
+  }
+
   //calculate position of software 3D cursor, not so useful right now but helps for picking in future
   void calculateCursorPos() {
     //need modelview in double, so convert what we have in float
@@ -938,9 +1166,10 @@ public:
       m_params->Render(0, 0);
     }
     drawStats(fps);
-    if (!m_uiHidden && !m_presetMenu && !m_displayHelp) drawFooter();
+    if (!m_uiHidden && !m_presetMenu && !m_displayHelp && !m_icMenu) drawFooter();
     if (!m_uiHidden && m_displayHelp) drawHelp();
     if (!m_uiHidden && m_presetMenu) drawPresetMenu();
+    if (!m_uiHidden && m_icMenu) drawICMenu();
 
   } //end of mainRender
 
@@ -1261,6 +1490,12 @@ public:
       return;
     }
 
+    if (m_icMenu) {
+      handleICMenuKey(key);
+      m_keyDown[key] = true;
+      return;
+    }
+
     if (m_presetMenu) {
       handlePresetMenuKey(key);
       m_keyDown[key] = true;
@@ -1451,6 +1686,30 @@ public:
   {
     int modifiers = glutGetModifiers(); // freeglut complains about this, but it seems to work
 
+    if (m_icMenu) {
+      const int n = (int)m_ics.size();
+      switch (key) {
+      case GLUT_KEY_UP:
+        if (n > 0) m_icIndex = (m_icIndex <= 0) ? n - 1 : m_icIndex - 1;
+        break;
+      case GLUT_KEY_DOWN:
+        if (n > 0) m_icIndex = (m_icIndex + 1) % n;
+        break;
+      case GLUT_KEY_PAGE_UP:
+        if (n > 0) m_icIndex = std::max(0, m_icIndex - 5);
+        break;
+      case GLUT_KEY_PAGE_DOWN:
+        if (n > 0) m_icIndex = std::min(n - 1, m_icIndex + 5);
+        break;
+      case GLUT_KEY_F10:
+        m_icMenu = false;
+        break;
+      default:
+        break;
+      }
+      return;
+    }
+
     if (m_presetMenu) {
       const int n = (int)m_presets.size();
       switch (key) {
@@ -1478,6 +1737,9 @@ public:
     switch (key) {
     case GLUT_KEY_F9:
       togglePresetMenu();
+      break;
+    case GLUT_KEY_F10:
+      toggleICMenu();
       break;
     case GLUT_KEY_F12:
       if (m_uiHidden) toggleUI();
@@ -1942,6 +2204,11 @@ public:
   bool m_prevDisplayHelp;
   bool m_prevPresetMenu;
   bool m_prevEnableStats;
+  std::string m_icDir;
+  std::string m_currentIC;
+  std::vector<ICChoice> m_ics;
+  int m_icIndex;
+  bool m_icMenu;
   std::string m_presetName;
   std::string m_statusMsg;
   double m_statusUntil;
@@ -2372,10 +2639,12 @@ void initAppRenderer(int argc, char** argv, octree *tree,
                      octree::IterationData &idata, bool showFPS, bool stereo,
                      const std::string &paramsFile,
                      const std::string &colorParamsFile,
-                     const std::string &presetDir) {
+                     const std::string &presetDir,
+                     const std::string &icDir,
+                     const std::string &icLabel) {
   displayFps = showFPS;
   //initGL(argc, argv);
-  theDemo = new BonsaiDemo(tree, idata, paramsFile, colorParamsFile, presetDir);
+  theDemo = new BonsaiDemo(tree, idata, paramsFile, colorParamsFile, presetDir, icDir, icLabel);
   if (stereo)
     theDemo->toggleStereo(); //SV assuming stereo is set to disable by default.
   glutMainLoop();

@@ -22,10 +22,12 @@ INPUT              ?= model3_child_compact.tipsy
 PARAMS             ?= presets/screen-1794842753.txt
 COLORPARAMS         ?=
 PRESET_DIR         ?= presets
+IC_DIR             ?= inputExamples
 VISUAL_ARGS        ?= -T 1000
 HEADLESS_ARGS      ?= -T 1
 
 PRESET_DIR_ARGS := --presetdir $(abspath $(PRESET_DIR))
+IC_DIR_ARGS := --icdir $(abspath $(IC_DIR))
 PRESET_ARGS := $(if $(PARAMS),--params $(abspath $(PARAMS)),) \
                $(if $(COLORPARAMS),--colorparams $(abspath $(COLORPARAMS)),)
 
@@ -72,7 +74,7 @@ visual: configure
 run-visual: visual
 	cd $(BUILD_DIR) && \
 		__NV_PRIME_RENDER_OFFLOAD=1 __GLX_VENDOR_LIBRARY_NAME=nvidia \
-		./bonsai2 -i $(INPUT) --dev 0 --renderdev 0 $(PRESET_DIR_ARGS) $(PRESET_ARGS) $(VISUAL_ARGS)
+		./bonsai2 -i $(INPUT) --dev 0 --renderdev 0 $(PRESET_DIR_ARGS) $(IC_DIR_ARGS) $(PRESET_ARGS) $(VISUAL_ARGS)
 
 run: run-visual
 

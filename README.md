@@ -59,6 +59,11 @@ Render presets live in `presets/`. Launch with
 `make run-visual PARAMS=presets/screen-1794842753.txt`, or use `F9`
 inside the app to switch presets and `D` to save the current settings.
 
+Initial conditions can be switched at runtime with `F10`: the browser
+lists `.tipsy` files from `inputExamples/` and the built-in Plummer,
+Sphere, and Cube generators (10k, 100k, 1M bodies). Selecting one
+restarts the process with the current preset, dt, and tEnd.
+
 Bonsai demo keys
 ----------------
 
@@ -79,6 +84,7 @@ Bonsai demo keys
 * [n]	detonate supernova
 * [1] toggle direct (N^2) gravitation
 * [F9]	preset browser (load / save / new)
+* [F10]	initial conditions browser (snapshot / Plummer / Sphere / Cube)
 * [D]	save current settings into the selected preset
 * [t] / [T]	halve / double simulation dt
 * [j]	cycle slider pages (render / color + dt)
@@ -121,6 +127,7 @@ Demo specific:
 * --params     Render parameter preset file [params.txt]
 * --colorparams Color/camera parameter file [colorparams.txt]
 * --presetdir  Directory scanned by the in-app preset browser
+* --icdir      Directory scanned by the initial-conditions browser
 
 
 

@@ -198,6 +198,8 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
   std::string paramsFile      = "params.txt";
   std::string colorParamsFile = "colorparams.txt";
   std::string presetDir       = "";
+  std::string icDir           = "";
+  std::string icLabel         = "";
 #endif
   bool direct     = false;
   bool fullscreen = false;
@@ -292,6 +294,7 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
 		ADDUSAGE("     --params #         render parameter preset file [" << paramsFile << "]");
 		ADDUSAGE("     --colorparams #    color/camera parameter file [" << colorParamsFile << "]");
 		ADDUSAGE("     --presetdir #      directory with render presets [" << presetDir << "]");
+		ADDUSAGE("     --icdir #          directory with initial-condition snapshots [" << icDir << "]");
 #endif
 #ifdef GALACTICS
 		ADDUSAGE("     --milkyway #       use Milky Way model with # particles per proc");
@@ -353,6 +356,7 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
     opt.setOption( "params");
     opt.setOption( "colorparams");
     opt.setOption( "presetdir");
+    opt.setOption( "icdir");
     opt.setFlag("displayfps");
     opt.setFlag("stereo");
 #endif
@@ -414,6 +418,7 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
     if ((optarg = opt.getValue("params")))       paramsFile      = std::string(optarg);
     if ((optarg = opt.getValue("colorparams")))  colorParamsFile = std::string(optarg);
     if ((optarg = opt.getValue("presetdir")))    presetDir       = std::string(optarg);
+    if ((optarg = opt.getValue("icdir")))        icDir           = std::string(optarg);
     dTstartGlow = std::max(dTstartGlow, 1.0f);
 #endif
     if (bonsaiFileName.empty() && fileName.empty() && nPlummer == -1 && nSphere == -1 && nMilkyWay == -1 && nCube == -1)
@@ -421,6 +426,20 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
       opt.printUsage();
       ::exit(0);
     }
+
+#ifdef USE_OPENGL
+    if (nPlummer >= 0)       icLabel = "Plummer " + std::to_string(nPlummer) + " bodies";
+    else if (nSphere >= 0)   icLabel = "Sphere " + std::to_string(nSphere) + " bodies";
+    else if (nCube >= 0)     icLabel = "Cube " + std::to_string(nCube) + " bodies";
+    else if (nMilkyWay >= 0) icLabel = "Milky Way " + std::to_string(nMilkyWay) + " bodies";
+    else if (diskmode)       icLabel = "disk: " + fileName;
+    else {
+      std::string base = fileName.substr(fileName.find_last_of("/\\") + 1);
+      size_t dot = base.find_last_of('.');
+      if (dot != std::string::npos) base = base.substr(0, dot);
+      icLabel = base;
+    }
+#endif
     if (!bonsaiFileName.empty() && !useMPIIO)
     {
       opt.printUsage();
@@ -820,7 +839,7 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
   //Start the integration
 #ifdef USE_OPENGL
   octree::IterationData idata;
-  initAppRenderer(argc, argv, tree, idata, displayFPS, stereo, paramsFile, colorParamsFile, presetDir);
+  initAppRenderer(argc, argv, tree, idata, displayFPS, stereo, paramsFile, colorParamsFile, presetDir, icDir, icLabel);
   LOG("Finished!!! Took in total: %lg sec\n", tree->get_time()-t0);
 #else
   tree->mpiSync();

@@ -11,6 +11,8 @@ void initAppRenderer(int argc, char** argv, octree *tree,
                      bool showFPS, bool stereo,
                      const std::string &paramsFile,
                      const std::string &colorParamsFile,
-                     const std::string &presetDir);
+                     const std::string &presetDir,
+                     const std::string &icDir,
+                     const std::string &icLabel);
 
 #endif // _RENDERLOOP_H_
