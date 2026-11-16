@@ -194,6 +194,11 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
   int reduce_bodies_factor = 1;
   int reduce_dust_factor   = 1;
   string fullScreenMode    = "";
+#ifdef USE_OPENGL
+  std::string paramsFile      = "params.txt";
+  std::string colorParamsFile = "colorparams.txt";
+  std::string presetDir       = "";
+#endif
   bool direct     = false;
   bool fullscreen = false;
   bool displayFPS = false;
@@ -284,6 +289,9 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
 		ADDUSAGE("     --Tglow  #         enable glow @ # Myr [" << TstartGlow << "]");
 		ADDUSAGE("     --dTglow  #        reach full brightness in @ # Myr [" << dTstartGlow << "]");
 		ADDUSAGE("     --stereo           enable stereo rendering");
+		ADDUSAGE("     --params #         render parameter preset file [" << paramsFile << "]");
+		ADDUSAGE("     --colorparams #    color/camera parameter file [" << colorParamsFile << "]");
+		ADDUSAGE("     --presetdir #      directory with render presets [" << presetDir << "]");
 #endif
 #ifdef GALACTICS
 		ADDUSAGE("     --milkyway #       use Milky Way model with # particles per proc");
@@ -342,6 +350,9 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
     opt.setOption( "fullscreen");
     opt.setOption( "Tglow");
     opt.setOption( "dTglow");
+    opt.setOption( "params");
+    opt.setOption( "colorparams");
+    opt.setOption( "presetdir");
     opt.setFlag("displayfps");
     opt.setFlag("stereo");
 #endif
@@ -400,6 +411,9 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
     if ((optarg = opt.getValue("fullscreen")))	 fullScreenMode     = string(optarg);
     if ((optarg = opt.getValue("Tglow")))	 TstartGlow  = (float)atof(optarg);
     if ((optarg = opt.getValue("dTglow")))	 dTstartGlow  = (float)atof(optarg);
+    if ((optarg = opt.getValue("params")))       paramsFile      = std::string(optarg);
+    if ((optarg = opt.getValue("colorparams")))  colorParamsFile = std::string(optarg);
+    if ((optarg = opt.getValue("presetdir")))    presetDir       = std::string(optarg);
     dTstartGlow = std::max(dTstartGlow, 1.0f);
 #endif
     if (bonsaiFileName.empty() && fileName.empty() && nPlummer == -1 && nSphere == -1 && nMilkyWay == -1 && nCube == -1)
@@ -806,7 +820,7 @@ int main(int argc, char** argv, MPI_Comm comm, int shrMemPID)
   //Start the integration
 #ifdef USE_OPENGL
   octree::IterationData idata;
-  initAppRenderer(argc, argv, tree, idata, displayFPS, stereo);
+  initAppRenderer(argc, argv, tree, idata, displayFPS, stereo, paramsFile, colorParamsFile, presetDir);
   LOG("Finished!!! Took in total: %lg sec\n", tree->get_time()-t0);
 #else
   tree->mpiSync();

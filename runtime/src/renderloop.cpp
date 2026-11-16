@@ -22,6 +22,12 @@
 #include <cstdarg>
 #include <vector>
 #include <cassert>
+#include <algorithm>
+#include <string>
+#include <filesystem>
+#include <ctime>
+
+namespace fs = std::filesystem;
 
 
 #include "render_particles.h"
@@ -312,7 +318,9 @@ void glPrintf(float x, float y, const char* format, ...)
 class BonsaiDemo
 {
 public:
-  BonsaiDemo(octree *tree, octree::IterationData &idata) 
+  BonsaiDemo(octree *tree, octree::IterationData &idata,
+             const std::string &paramsFile, const std::string &colorParamsFile,
+             const std::string &presetDir)
     : m_tree(tree), m_idata(idata), iterationsRemaining(true),
 //       m_renderer(tree->localTree.n + tree->localTree.n_dust),
       m_renderer(tree->localTree.n, MAX_PARTICLES),
@@ -345,7 +353,20 @@ public:
       m_cameraRollHome(0.0f),
       m_cameraRoll(0.0f),
       m_enableStats(true),
-      m_densityRange(100)
+      m_densityRange(100),
+      m_paramsFile(paramsFile),
+      m_colorParamsFile(colorParamsFile),
+      m_presetDir(presetDir),
+      m_presetIndex(0),
+      m_presetMenu(false),
+      m_presetNameInput(false),
+      m_displayHelp(false),
+      m_uiHidden(false),
+      m_prevDisplaySliders(false),
+      m_prevDisplayHelp(false),
+      m_prevPresetMenu(false),
+      m_prevEnableStats(false),
+      m_statusUntil(0.0)
   {
     m_windowDims = make_int2(WINDOWW, WINDOWH);
     m_cameraTrans = make_float3(0, -2, -100);
@@ -377,8 +398,17 @@ public:
     initColors();
 
     readCameras("cameras.txt");
-    readParams(m_renderer.getParams(), "params.txt");
-    readParams(m_colorParams, "colorparams.txt");
+    readParams(m_renderer.getParams(), m_paramsFile.c_str());
+    readParams(m_colorParams, m_colorParamsFile.c_str());
+
+    if (m_presetDir.empty()) {
+      fs::path paramsPath(m_paramsFile);
+      if (paramsPath.has_parent_path() && paramsPath.parent_path() != fs::path("."))
+        m_presetDir = paramsPath.parent_path().string();
+      else
+        m_presetDir = "../presets";
+    }
+    refreshPresets();
 
     cudaEventCreate(&startEvent, 0);
     cudaEventCreate(&stopEvent, 0);
@@ -412,6 +442,186 @@ public:
     m_stereoEnabled = !m_stereoEnabled;
   }
   void togglePause() { m_paused = !m_paused; }
+  void toggleUI() {
+    m_uiHidden = !m_uiHidden;
+    if (m_uiHidden) {
+      m_prevDisplaySliders = m_displaySliders;
+      m_prevDisplayHelp    = m_displayHelp;
+      m_prevPresetMenu     = m_presetMenu;
+      m_prevEnableStats    = m_enableStats;
+      m_displaySliders = false;
+      m_displayHelp    = false;
+      m_presetMenu     = false;
+      m_enableStats    = false;
+      glutSetCursor(GLUT_CURSOR_NONE);
+      printf("UI hidden - press / to show\n");
+    } else {
+      m_displaySliders = m_prevDisplaySliders;
+      m_displayHelp    = m_prevDisplayHelp;
+      m_presetMenu     = m_prevPresetMenu;
+      m_enableStats    = m_prevEnableStats;
+      if (m_presetMenu) refreshPresets();
+      glutSetCursor(GLUT_CURSOR_CROSSHAIR);
+      printf("UI shown\n");
+    }
+  }
+  void scaleTimeStep(float factor) {
+    float dt = m_tree->getTimeStep() * factor;
+    if (dt < 1e-5f) dt = 1e-5f;
+    if (dt > 1.0f)  dt = 1.0f;
+    m_tree->setTimeStep(dt);
+    printf("dt = %g\n", dt);
+  }
+
+  bool samePath(const std::string &a, const std::string &b) const {
+    std::error_code ec;
+    fs::path ca = fs::weakly_canonical(fs::path(a), ec);
+    if (ec) return a == b;
+    fs::path cb = fs::weakly_canonical(fs::path(b), ec);
+    if (ec) return a == b;
+    return ca == cb;
+  }
+
+  std::string presetStem(const std::string &path) const {
+    return fs::path(path).stem().string();
+  }
+
+  void setStatus(const std::string &msg) {
+    m_statusMsg = msg;
+    m_statusUntil = GetTimer() + 4.0;
+    printf("%s\n", msg.c_str());
+  }
+
+  void refreshPresets() {
+    m_presets.clear();
+    std::error_code ec;
+    fs::path dir(m_presetDir);
+    if (!m_presetDir.empty() && fs::is_directory(dir, ec)) {
+      for (const auto &entry : fs::directory_iterator(dir, ec)) {
+        if (entry.is_regular_file(ec) && entry.path().extension() == ".txt")
+          m_presets.push_back(entry.path().string());
+      }
+    }
+    std::sort(m_presets.begin(), m_presets.end());
+    m_presetIndex = m_presets.empty() ? -1 : 0;
+    for (size_t i = 0; i < m_presets.size(); ++i) {
+      if (samePath(m_presets[i], m_paramsFile)) {
+        m_presetIndex = (int)i;
+        break;
+      }
+    }
+  }
+
+  std::string selectedPresetPath() const {
+    if (m_presetIndex < 0 || m_presetIndex >= (int)m_presets.size())
+      return "";
+    return m_presets[m_presetIndex];
+  }
+
+  void togglePresetMenu() {
+    if (m_uiHidden) toggleUI();
+    m_presetMenu = !m_presetMenu;
+    m_presetNameInput = false;
+    if (m_presetMenu) {
+      refreshPresets();
+      setStatus("Preset browser opened");
+    }
+  }
+
+  void loadSelectedPreset() {
+    const std::string path = selectedPresetPath();
+    if (path.empty()) {
+      setStatus("No preset selected");
+      return;
+    }
+    readParams(m_renderer.getParams(), path.c_str());
+    m_paramsFile = path;
+    setStatus("Loaded preset: " + presetStem(path));
+    m_presetMenu = false;
+  }
+
+  void saveSelectedPreset() {
+    const std::string path = selectedPresetPath();
+    if (path.empty()) {
+      beginNewPreset();
+      return;
+    }
+    writeParams(m_renderer.getParams(), path.c_str());
+    m_paramsFile = path;
+    setStatus("Saved preset: " + presetStem(path));
+  }
+
+  void beginNewPreset() {
+    m_presetName = "preset_";
+    m_presetNameInput = true;
+    setStatus("Type a name, then Enter (leave suffix empty for a timestamp)");
+  }
+
+  void commitNewPreset() {
+    std::string name = m_presetName;
+    if (name.empty()) {
+      m_presetNameInput = false;
+      setStatus("Preset name is empty, cancelled");
+      return;
+    }
+    if (name == "preset_") {
+      std::time_t now = std::time(nullptr);
+      std::tm *tmv = std::localtime(&now);
+      char buf[64];
+      if (tmv) std::strftime(buf, sizeof(buf), "preset_%Y%m%d_%H%M%S", tmv);
+      else     snprintf(buf, sizeof(buf), "preset_new");
+      name = buf;
+    }
+    if (name.size() < 4 || name.substr(name.size() - 4) != ".txt")
+      name += ".txt";
+    fs::path path = fs::path(m_presetDir) / name;
+    writeParams(m_renderer.getParams(), path.string().c_str());
+    m_paramsFile = path.string();
+    m_presetNameInput = false;
+    refreshPresets();
+    setStatus("Saved new preset: " + name);
+  }
+
+  void handlePresetMenuKey(unsigned char key) {
+    if (m_presetNameInput) {
+      if (key == 13 || key == 10) {
+        commitNewPreset();
+      } else if (key == 27) {
+        m_presetNameInput = false;
+        setStatus("New preset cancelled");
+      } else if (key == 8 || key == 127) {
+        if (!m_presetName.empty()) m_presetName.pop_back();
+      } else if (key >= 32 && key < 127 && key != '/' && key != '\\' && key != ' ') {
+        if (m_presetName.size() < 64) m_presetName.push_back((char)key);
+      }
+      return;
+    }
+
+    switch (key) {
+    case 13:
+    case 10:
+      loadSelectedPreset();
+      break;
+    case 27:
+      m_presetMenu = false;
+      break;
+    case 's':
+    case 'S':
+      saveSelectedPreset();
+      break;
+    case 'n':
+    case 'N':
+      beginNewPreset();
+      break;
+    case 'r':
+    case 'R':
+      refreshPresets();
+      setStatus("Preset list reloaded");
+      break;
+    default:
+      break;
+    }
+  }
   void toggleBoxes() { m_displayBoxes = !m_displayBoxes; }
   void toggleSliders() { m_displaySliders = !m_displaySliders; }
   void toggleGlow() { m_enableGlow = !m_enableGlow; m_renderer.setEnableFilters(m_enableGlow); }
@@ -486,10 +696,168 @@ public:
     endWinCoords();
 
     char str[256];
-    sprintf(str, "Bonsai N-Body Tree Code (%d bodies): %0.1f fps",
-            bodies, fps);
+    sprintf(str, "Bonsai N-Body Tree Code (%d bodies): %0.1f fps  dt=%g",
+            bodies, fps, m_tree->getTimeStep());
 
     glutSetWindowTitle(str);
+  }
+
+  void drawFooter()
+  {
+    const int W = glutGet(GLUT_WINDOW_WIDTH);
+    beginDeviceCoords();
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.0f, 0.0f, 0.0f, 0.55f);
+    glRectf(10.0f, 10.0f, (float)W - 10.0f, 70.0f);
+
+    glColor3f(0.72f, 0.84f, 1.0f);
+    glPrint(20, 52, "F9 presets | h sliders | j params | space pause | t/T dt | D save | / hide UI | ? help",
+            GLUT_BITMAP_9_BY_15);
+    char buf[512];
+    snprintf(buf, sizeof(buf), "preset: %s    dt: %g",
+             presetStem(m_paramsFile).c_str(), m_tree->getTimeStep());
+    glColor3f(0.65f, 0.72f, 0.80f);
+    glPrint(20, 30, buf, GLUT_BITMAP_9_BY_15);
+
+    glDisable(GL_BLEND);
+    endWinCoords();
+  }
+
+  void drawHelp()
+  {
+    const int W = glutGet(GLUT_WINDOW_WIDTH);
+    const int H = glutGet(GLUT_WINDOW_HEIGHT);
+    beginDeviceCoords();
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.01f, 0.02f, 0.04f, 0.92f);
+    glRectf(W * 0.08f, H * 0.12f, W * 0.92f, H * 0.88f);
+
+    int x = (int)(W * 0.11f);
+    int y = (int)(H * 0.84f);
+    const int line = 20;
+
+    glColor3f(0.40f, 0.80f, 1.00f);
+    glPrint(x, y, "BONSAI CONTROLS", GLUT_BITMAP_9_BY_15);
+    y -= line + 8;
+
+    glColor3f(0.85f, 0.88f, 0.92f);
+    glPrint(x, y, "space      pause / resume simulation", GLUT_BITMAP_9_BY_15);              y -= line;
+    glPrint(x, y, "h  or `    show / hide sliders", GLUT_BITMAP_9_BY_15);                     y -= line;
+    glPrint(x, y, "j          switch slider page (render / color + dt)", GLUT_BITMAP_9_BY_15); y -= line;
+    glPrint(x, y, "t / T      halve / double simulation dt", GLUT_BITMAP_9_BY_15);            y -= line;
+    glPrint(x, y, "F9         preset browser: load / save / new", GLUT_BITMAP_9_BY_15);       y -= line;
+    glPrint(x, y, "D          save settings to selected preset", GLUT_BITMAP_9_BY_15);        y -= line;
+    glPrint(x, y, "p          cycle particle drawing mode", GLUT_BITMAP_9_BY_15);             y -= line;
+    glPrint(x, y, "b          toggle octree boxes", GLUT_BITMAP_9_BY_15);                     y -= line;
+    glPrint(x, y, "g          toggle glow / post processing", GLUT_BITMAP_9_BY_15);           y -= line;
+    glPrint(x, y, "c          fit camera", GLUT_BITMAP_9_BY_15);                              y -= line;
+    glPrint(x, y, "f          fly mode (WASD, right mouse = faster)", GLUT_BITMAP_9_BY_15);   y -= line;
+    glPrint(x, y, "1          direct N^2 gravity", GLUT_BITMAP_9_BY_15);                      y -= line;
+    glPrint(x, y, "esc        close menu/help, or quit", GLUT_BITMAP_9_BY_15);                y -= line;
+    glPrint(x, y, "? / F12    toggle this help", GLUT_BITMAP_9_BY_15);                        y -= line;
+    glPrint(x, y, "/          hide / show the whole interface", GLUT_BITMAP_9_BY_15);         y -= line;
+
+    glDisable(GL_BLEND);
+    endWinCoords();
+  }
+
+  void drawPresetMenu()
+  {
+    if (!m_presetMenu) return;
+
+    beginDeviceCoords();
+    glScalef(0.25f, 0.25f, 1.0f);
+
+    const float W = glutGet(GLUT_WINDOW_WIDTH) * 4.0f;
+    const float H = glutGet(GLUT_WINDOW_HEIGHT) * 4.0f;
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glColor4f(0.01f, 0.02f, 0.04f, 1.0f);
+    glRectf(W * 0.02f, H * 0.02f, W * 0.98f, H * 0.98f);
+
+    float x = W * 0.10f;
+    float y = H * 0.88f;
+    const float line = 150.0f;
+
+    glColor3f(0.40f, 0.80f, 1.00f);
+    glPrintf(x, y, "PRESET BROWSER");
+    y -= line * 1.2f;
+
+    glColor3f(0.60f, 0.66f, 0.72f);
+    glPrintf(x, y, "%s", m_presetDir.c_str());
+    y -= line;
+
+    glColor3f(0.65f, 0.72f, 0.80f);
+    glPrintf(x, y, "current: %s", presetStem(m_paramsFile).c_str());
+    y -= line;
+    glPrintf(x, y, "dt: %g", m_tree->getTimeStep());
+    y -= line * 1.2f;
+
+    if (m_presets.empty()) {
+      glColor3f(1.0f, 0.6f, 0.4f);
+      glPrintf(x, y, "No .txt presets found in this directory");
+      y -= line;
+    } else {
+      const int n = (int)m_presets.size();
+      int maxRows = std::max(1, (int)((H * 0.50f) / line));
+      int start = std::max(0, m_presetIndex - maxRows / 2);
+      if (start + maxRows > n) start = std::max(0, n - maxRows);
+
+      for (int i = start; i < n && i < start + maxRows; ++i) {
+        const std::string path = m_presets[i];
+        const bool selected = (i == m_presetIndex);
+        const bool current  = samePath(path, m_paramsFile);
+
+        if (selected)      glColor3f(1.00f, 0.85f, 0.20f);
+        else if (current)  glColor3f(0.40f, 1.00f, 0.40f);
+        else               glColor3f(0.80f, 0.80f, 0.80f);
+
+        glPrintf(x, y, "%s %s%s",
+                 selected ? ">" : " ",
+                 presetStem(path).c_str(),
+                 current ? "  [current]" : "");
+        y -= line;
+      }
+    }
+
+    glDisable(GL_BLEND);
+    endWinCoords();
+
+    const int winW = glutGet(GLUT_WINDOW_WIDTH);
+    const int winH = glutGet(GLUT_WINDOW_HEIGHT);
+    beginDeviceCoords();
+    glDisable(GL_DEPTH_TEST);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    int px = (int)(winW * 0.10f);
+    int py = (int)(winH * 0.18f);
+    if (m_presetNameInput) {
+      char buf[512];
+      snprintf(buf, sizeof(buf), "New preset name: %s_", m_presetName.c_str());
+      glColor3f(1.0f, 0.85f, 0.20f);
+      glPrint(px, py, buf, GLUT_BITMAP_9_BY_15);
+      py -= 20;
+      glColor3f(0.75f, 0.80f, 0.85f);
+      glPrint(px, py, "[Enter] save    [Esc] cancel", GLUT_BITMAP_9_BY_15);
+    } else {
+      glColor3f(0.75f, 0.80f, 0.85f);
+      glPrint(px, py, "Up/Down select   Enter load   s save   n new   r reload   Esc/F9 close",
+              GLUT_BITMAP_9_BY_15);
+    }
+
+    if (!m_statusMsg.empty() && GetTimer() < m_statusUntil) {
+      glColor3f(0.40f, 1.00f, 0.50f);
+      glPrint(px, (int)(winH * 0.10f), m_statusMsg.c_str(), GLUT_BITMAP_9_BY_15);
+    }
+
+    glDisable(GL_BLEND);
+    endWinCoords();
   }
 
   //calculate position of software 3D cursor, not so useful right now but helps for picking in future
@@ -566,10 +934,13 @@ public:
       }
     }
 
-    if (m_displaySliders) {
+    if (m_displaySliders && !m_uiHidden) {
       m_params->Render(0, 0);
     }
     drawStats(fps);
+    if (!m_uiHidden && !m_presetMenu && !m_displayHelp) drawFooter();
+    if (!m_uiHidden && m_displayHelp) drawHelp();
+    if (!m_uiHidden && m_presetMenu) drawPresetMenu();
 
   } //end of mainRender
 
@@ -884,9 +1255,39 @@ public:
   {
     m_keyModifiers = glutGetModifiers();
 
+    if (key == '/' && !m_presetNameInput) {
+      toggleUI();
+      m_keyDown[key] = true;
+      return;
+    }
+
+    if (m_presetMenu) {
+      handlePresetMenuKey(key);
+      m_keyDown[key] = true;
+      return;
+    }
+
+    if (key == '?') {
+      if (m_uiHidden) toggleUI();
+      m_displayHelp = !m_displayHelp;
+      m_keyDown[key] = true;
+      return;
+    }
+    if (key == 27 && m_displayHelp) {
+      m_displayHelp = false;
+      m_keyDown[key] = true;
+      return;
+    }
+
     switch (key) {
     case ' ':
       togglePause();
+      break;
+    case 't':
+      scaleTimeStep(0.5f);
+      break;
+    case 'T':
+      scaleTimeStep(2.0f);
       break;
     case 27: // escape
       displayTimers();
@@ -927,6 +1328,7 @@ public:
       break;
     case '`':
     case 'h':
+      if (m_uiHidden) toggleUI();
   	  toggleSliders();
       m_enableStats = !m_displaySliders;
       break;
@@ -990,8 +1392,8 @@ public:
     case 'D':
       //printf("%f %f %f %f %f %f\n", m_cameraTrans.x, m_cameraTrans.y, m_cameraTrans.z, m_cameraRot.x, m_cameraRot.y, m_cameraRot.z);
       writeCameras("cameras.txt");
-      writeParams(m_renderer.getParams(), "params.txt");
-      writeParams(m_colorParams, "colorparams.txt");
+      writeParams(m_renderer.getParams(), m_paramsFile.c_str());
+      writeParams(m_colorParams, m_colorParamsFile.c_str());
       glClearColor(0.0f, 1.0f, 0.0f, 1.0f); glClear(GL_COLOR_BUFFER_BIT); glClearColor(0.0f, 0.0f, 0.0f, 1.0f); glutSwapBuffers();
       break;
     case 'j':
@@ -1049,7 +1451,38 @@ public:
   {
     int modifiers = glutGetModifiers(); // freeglut complains about this, but it seems to work
 
+    if (m_presetMenu) {
+      const int n = (int)m_presets.size();
+      switch (key) {
+      case GLUT_KEY_UP:
+        if (n > 0) m_presetIndex = (m_presetIndex <= 0) ? n - 1 : m_presetIndex - 1;
+        break;
+      case GLUT_KEY_DOWN:
+        if (n > 0) m_presetIndex = (m_presetIndex + 1) % n;
+        break;
+      case GLUT_KEY_PAGE_UP:
+        if (n > 0) m_presetIndex = std::max(0, m_presetIndex - 5);
+        break;
+      case GLUT_KEY_PAGE_DOWN:
+        if (n > 0) m_presetIndex = std::min(n - 1, m_presetIndex + 5);
+        break;
+      case GLUT_KEY_F9:
+        m_presetMenu = false;
+        break;
+      default:
+        break;
+      }
+      return;
+    }
+
     switch (key) {
+    case GLUT_KEY_F9:
+      togglePresetMenu();
+      break;
+    case GLUT_KEY_F12:
+      if (m_uiHidden) toggleUI();
+      m_displayHelp = !m_displayHelp;
+      break;
     case GLUT_KEY_F1:
     case GLUT_KEY_F2:
     case GLUT_KEY_F3:
@@ -1413,6 +1846,7 @@ public:
     m_colorParams->AddParam(new Param<float>("iod", m_IOD, 1.0f, 20.0f, 4.0, &m_IOD));
     m_colorParams->AddParam(new Param<float>("cursor size", m_cursorSize, 0.0, 5.0, 0.5, &m_cursorSize));
     m_colorParams->AddParam(new Param<int>("Density perc", m_densityRange, 0, 100, 1, &m_densityRange));
+    m_colorParams->AddParam(new Param<float>("dt", m_tree->getTimeStep(), 0.00001f, 1.0f, 0.001f, m_tree->getTimeStepPtr()));
 
   }
 
@@ -1495,6 +1929,22 @@ public:
 
   ParamListGL *m_colorParams;
   ParamListGL *m_params;    // current
+  std::string m_paramsFile;
+  std::string m_colorParamsFile;
+  std::string m_presetDir;
+  std::vector<std::string> m_presets;
+  int m_presetIndex;
+  bool m_presetMenu;
+  bool m_presetNameInput;
+  bool m_displayHelp;
+  bool m_uiHidden;
+  bool m_prevDisplaySliders;
+  bool m_prevDisplayHelp;
+  bool m_prevPresetMenu;
+  bool m_prevEnableStats;
+  std::string m_presetName;
+  std::string m_statusMsg;
+  double m_statusUntil;
 
   // saved cameras
   struct Camera {
@@ -1919,10 +2369,13 @@ void initGL(int argc, char** argv, const char *fullScreenMode, bool &stereo)
 
 
 void initAppRenderer(int argc, char** argv, octree *tree, 
-                     octree::IterationData &idata, bool showFPS, bool stereo) {
+                     octree::IterationData &idata, bool showFPS, bool stereo,
+                     const std::string &paramsFile,
+                     const std::string &colorParamsFile,
+                     const std::string &presetDir) {
   displayFps = showFPS;
   //initGL(argc, argv);
-  theDemo = new BonsaiDemo(tree, idata);
+  theDemo = new BonsaiDemo(tree, idata, paramsFile, colorParamsFile, presetDir);
   if (stereo)
     theDemo->toggleStereo(); //SV assuming stereo is set to disable by default.
   glutMainLoop();

@@ -703,6 +703,9 @@ public:
   float get_t_current() const       { return t_current; }
   void setUseDirectGravity(bool s)  { useDirectGravity = s;    }
   bool getUseDirectGravity() const  { return useDirectGravity; }
+  float getTimeStep() const         { return timeStep;         }
+  void  setTimeStep(float dt)       { timeStep = dt;           }
+  float *getTimeStepPtr()           { return &timeStep;        }
 
   octree(const MPI_Comm &comm,
          my_dev::context *devContext_,
