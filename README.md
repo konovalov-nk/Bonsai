@@ -23,7 +23,42 @@ limitations under the License.
 ## BonsaiSPH
 
 The version of Bonsai that has support for SPH can be found in the `BonsaiSPH` branch of this repository.
- 
+
+Modern build (CUDA 13 / RTX 50xx)
+---------------------------------
+
+Tested on an RTX 5090 (sm_120) with CUDA 13.4. The runtime was updated
+for C++17/CCCL, current tree-walk buffer sizes, host stack usage, and
+GLSL 1.20 shader rules.
+
+Build inside the repository:
+
+```bash
+make              # visual demo -> build/bonsai2
+make run-visual   # build and start the demo
+make headless     # -> build-headless/bonsai2_slowdust
+make run-headless
+```
+
+The Makefile detects the local compute capability, prefers Ninja and
+gcc-15, and passes the matching `-gencode` flag (sm_120 on a 5090).
+`make run-visual` also enables NVIDIA PRIME offload for CUDA-GL interop
+when the display is connected to another GPU.
+
+Manual CMake for sm_120:
+
+```bash
+cmake -S runtime -B build -G Ninja \
+  -DUSE_MPI=OFF -DUSE_CUB=0 -DUSE_DUST=1 -DUSE_OPENGL=1 \
+  -DCMAKE_CXX_COMPILER=g++-15 -DCMAKE_C_COMPILER=gcc-15 \
+  -DCUDA_NVCC_FLAGS="-gencode;arch=compute_120,code=sm_120"
+cmake --build build -j8
+```
+
+Render presets live in `presets/`. Launch with
+`make run-visual PARAMS=presets/screen-1794842753.txt`, or use `F9`
+inside the app to switch presets and `D` to save the current settings.
+
 Bonsai demo keys
 ----------------
 
@@ -43,6 +78,12 @@ Bonsai demo keys
 * [f]	toggle fly mode (use wasd to steer, right mouse to go faster)
 * [n]	detonate supernova
 * [1] toggle direct (N^2) gravitation
+* [F9]	preset browser (load / save / new)
+* [D]	save current settings into the selected preset
+* [t] / [T]	halve / double simulation dt
+* [j]	cycle slider pages (render / color + dt)
+* [?] / [F12]	toggle help
+* [/]	hide / show the whole interface
 
 
 Bonsai Program arguments
@@ -77,6 +118,9 @@ Demo specific:
 * --displayfps Enable on-screen FPS display
 * --Tglow      Enable glowing particles @ # Myr
 * --dTglow     Reach full brightness in @ # Myr
+* --params     Render parameter preset file [params.txt]
+* --colorparams Color/camera parameter file [colorparams.txt]
+* --presetdir  Directory scanned by the in-app preset browser
 
 
 
