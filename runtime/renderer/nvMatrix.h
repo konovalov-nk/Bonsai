@@ -217,7 +217,7 @@ namespace nv
             s[2] = &r3[0];
             s[3] = &r4[0];
 
-            register int i,j,p,jj;
+            int i,j,p,jj;
 
             for (i=0; i<4; i++) {
                 for (j=0; j<4; j++) {

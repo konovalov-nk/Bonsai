@@ -13,6 +13,13 @@ void octree::load_kernels() {
                           this->getDevContext()->getComputeCapabilityMajor(),
                           this->getDevContext()->getComputeCapabilityMinor());
   nBlocksForTreeWalk 	= nMultiProcessors*blocksPerSM;
+
+  //The tree-walk scratch buffer size is computed with 32-bit ints in build.cpp.
+  //Cap the number of blocks so that 2*(LMEM_STACK_SIZE*NTHREAD+LMEM_EXTRA_SIZE)*blocks
+  //does not overflow a signed int on GPUs with many SMs (e.g. 170 SMs -> 5440 blocks).
+  const int maxTreeWalkBlocks = 2560;
+  if(nBlocksForTreeWalk > maxTreeWalkBlocks)
+    nBlocksForTreeWalk = maxTreeWalkBlocks;
   
 
   

@@ -333,21 +333,23 @@ bool octree::iterate_once(IterationData &idata) {
         localTree.bodies_ids.d2h();
 
         double tDens1 = get_time();
-        const DENSITY dens(mpiCommWorld, procId, nProcs, localTree.n,
+        const DENSITY *dens = new DENSITY(mpiCommWorld, procId, nProcs, localTree.n,
                            &localTree.bodies_pos[0],
                            &localTree.bodies_vel[0],
                            &localTree.bodies_ids[0],
                            1, 2.33e9, 20, "density", t_current);
+        delete dens;
 
         double tDens2 = get_time();
         if(procId == 0) LOGF(stderr,"Density took: Copy: %lg Create: %lg \n", tDens1-tDens0, tDens2-tDens1);
 
         double tDisk1 = get_time();
-        const DISKSTATS diskstats(mpiCommWorld, procId, nProcs, localTree.n,
+        const DISKSTATS *diskstats = new DISKSTATS(mpiCommWorld, procId, nProcs, localTree.n,
                            &localTree.bodies_pos[0],
                            &localTree.bodies_vel[0],
                            &localTree.bodies_ids[0],
                            1, 2.33e9, "diskstats", t_current);
+        delete diskstats;
 
         double tDisk2 = get_time();
         if(procId == 0) LOGF(stderr,"Diskstats took: Create: %lg \n", tDisk2-tDisk1);

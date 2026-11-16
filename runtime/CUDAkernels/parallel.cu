@@ -117,7 +117,7 @@ struct domainCompare
 };
 
 
- struct domainCompare2 : public binary_function<uint2,uint2,bool>
+ struct domainCompare2
 {
 __host__ __device__ bool operator()(const uint2 &lhs, const uint2 &rhs) const {return lhs.x == rhs.x;}
 }; // end domainCompare2

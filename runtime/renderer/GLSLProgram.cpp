@@ -21,7 +21,16 @@
  */
  
  #include <stdlib.h>
+#include <string>
+#include <cstring>
 #include "GLSLProgram.h"
+
+static std::string withVersion(const char *src)
+{
+    if (src && strncmp(src, "#version", 8) != 0)
+        return std::string("#version 120\n") + src;
+    return src;
+}
 
 GLSLProgram::GLSLProgram(const char *vsource, const char *fsource)
 {
@@ -170,11 +179,31 @@ GLSLProgram::compileProgram(const char *vsource, const char *gsource, const char
     GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
     GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
 
-    glShaderSource(vertexShader, 1, &vsource, 0);
-    glShaderSource(fragmentShader, 1, &fsource, 0);
+    std::string vsrc = withVersion(vsource);
+    std::string fsrc = withVersion(fsource);
+    const char *vp = vsrc.c_str();
+    const char *fp = fsrc.c_str();
+
+    glShaderSource(vertexShader, 1, &vp, 0);
+    glShaderSource(fragmentShader, 1, &fp, 0);
     
     glCompileShader(vertexShader);
     glCompileShader(fragmentShader);
+
+    GLint vok = 0, fok = 0;
+    glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &vok);
+    glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &fok);
+    if (!vok || !fok) {
+        char log[4096];
+        if (!vok) {
+            glGetShaderInfoLog(vertexShader, sizeof(log), 0, log);
+            fprintf(stderr, "Vertex shader compile failed:\n%s\n--- source ---\n%.1500s\n", log, vsource);
+        }
+        if (!fok) {
+            glGetShaderInfoLog(fragmentShader, sizeof(log), 0, log);
+            fprintf(stderr, "Fragment shader compile failed:\n%s\n--- source ---\n%.1500s\n", log, fsource);
+        }
+    }
 
     GLuint program = glCreateProgram();
 

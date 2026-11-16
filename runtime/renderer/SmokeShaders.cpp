@@ -37,6 +37,7 @@ void main()                                                 \n
     gl_Position = gl_ModelViewProjectionMatrix * wpos;      \n
 	float mass = gl_Vertex.w;
 	float type = gl_Color.w;
+	float radius = pointRadius;
 
     // calculate window-space point size                    \n
     vec4 eyeSpacePos = gl_ModelViewMatrix * wpos;           \n
@@ -48,7 +49,7 @@ void main()                                                 \n
 	vec4 col = gl_Color;
 	if (type == 0.0) {
 		// dust
-		pointRadius *= ageScale;	// scale up
+		radius *= ageScale;	// scale up
 		col.a = dustAlpha;
     } else if (type == 1.0) {
         col.rgb *= overBrightThreshold; // XXX hack, using this var for now!!
@@ -59,13 +60,13 @@ void main()                                                 \n
     } else if (type == 3.0) {
       //col.a = 1.0;
       // cull dark matter
-      if (cullDarkMatter != 0) {
+      if (cullDarkMatter != 0.0) {
         gl_Position.w = -1.0;
       }
     }
 
     //gl_PointSize = pointRadius*(pointScale / dist);       \n
-	gl_PointSize = max(1.0, pointRadius * (pointScale / dist)); \n
+	gl_PointSize = max(1.0, radius * (pointScale / dist)); \n
     //float pointSize = pointRadius * (pointScale / dist);
     //if (pointSize < 1.0) col.rgb *= pointSize;
     //gl_PointSize = max(1.0, pointSize);
@@ -450,16 +451,16 @@ void main()                                                                     
 {                                                                                     \n
     vec4 c;                                                                           \n
     vec2 uv = gl_TexCoord[0].xy;
-    c = texture2D(tex, uv + vec2(-1, -1)*texelSize*blurRadius);    \n
-    c += texture2D(tex, uv + vec2(0, -1)*texelSize*blurRadius)*2;  \n
-    c += texture2D(tex, uv + vec2(1, -1)*texelSize*blurRadius);    \n
+    c = texture2D(tex, uv + vec2(-1.0, -1.0)*texelSize*blurRadius);    \n
+    c += texture2D(tex, uv + vec2(0.0, -1.0)*texelSize*blurRadius)*2.0;  \n
+    c += texture2D(tex, uv + vec2(1.0, -1.0)*texelSize*blurRadius);    \n
 
-    c += texture2D(tex, uv + vec2(-1, 0)*texelSize*blurRadius)*2;  \n
-    c += texture2D(tex, uv + vec2(0, 0)*texelSize*blurRadius)*4;   \n
-    c += texture2D(tex, uv + vec2(1, 0)*texelSize*blurRadius)*2;   \n
+    c += texture2D(tex, uv + vec2(-1.0, 0.0)*texelSize*blurRadius)*2.0;  \n
+    c += texture2D(tex, uv + vec2(0.0, 0.0)*texelSize*blurRadius)*4.0;   \n
+    c += texture2D(tex, uv + vec2(1.0, 0.0)*texelSize*blurRadius)*2.0;   \n
 
-    c += texture2D(tex, uv + vec2(-1, 1)*texelSize*blurRadius);    \n
-    c += texture2D(tex, uv + vec2(0, 1)*texelSize*blurRadius)*2;   \n
+    c += texture2D(tex, uv + vec2(-1.0, 1.0)*texelSize*blurRadius);    \n
+    c += texture2D(tex, uv + vec2(0.0, 1.0)*texelSize*blurRadius)*2.0;   \n
     c += texture2D(tex, uv + vec2(1, 1)*texelSize*blurRadius);     \n
 
     c /= 16.0;                                                                        \n
@@ -517,7 +518,7 @@ void main()                                                                     
     vec4 c = vec4(0.0, 0.0, 0.0, 0.0);                                                               \n
 	float wsum = 0.0;
     vec2 uv = gl_TexCoord[0].xy + texelSize*0.25;
-	for(int i=-radius; i<=radius; i++) {                                              \n
+	for(float i=-radius; i<=radius; i+=1.0) {                                              \n
 		//float x = (i / radius)*3.0;
 		//float w = exp(-x*x);
 		//float w = 1.0;
@@ -574,7 +575,7 @@ void main()                                                                     
 	float wsum = 0.0;
     //vec2 uv = gl_TexCoord[0].xy - texelSize*0.25;
 	vec2 uv = gl_TexCoord[0].xy;
-	for(int i=-radius; i<=radius; i++) {                                              \n
+	for(float i=-radius; i<=radius; i+=1.0) {                                              \n
 		float x = (i / radius)*4.0;
 		float w = exp(-x*x);
 		vec4 s = texture2D(tex, uv + i*texelSize);				      \n
@@ -602,11 +603,11 @@ void main()                                                        \n
 {                                                                  \n
     vec4 c;
 	c = texture2D(tex, gl_TexCoord[0].xy) * sourceIntensity;           \n
-    if (starIntensity > 0) {
+    if (starIntensity > 0.0) {
 	    c += texture2D(blurTexH, gl_TexCoord[0].xy) * starIntensity;
 	    c += texture2D(blurTexV, gl_TexCoord[0].xy) * starIntensity;
     }
-    if (flareIntensity > 0) {
+    if (flareIntensity > 0.0) {
       c += texture2D(flareTex, gl_TexCoord[0].xy) * flareIntensity;
     }
     c += texture2D(glowTex, gl_TexCoord[0].xy) * glowIntensity;
@@ -727,7 +728,7 @@ void main()                                                                     
     //gl_FragColor = vec4(vec3(alpha, alpha, alpha) * alpha, alpha);                                  \n
     //gl_FragColor = vec4(vec3(0, 0, 0) * alpha, alpha);
 	//gl_FragColor = vec4(lerp(gl_Color.rgb*d, shadow, indirectLighting) * alpha, alpha);
-    gl_FragColor = vec4(lerp(gl_Color.rgb*n, shadow, indirectLighting) * alpha, alpha);
+    gl_FragColor = vec4(mix(gl_Color.rgb*n, shadow, indirectLighting) * alpha, alpha);
 }\n
 );
 
@@ -748,7 +749,7 @@ void main()                                                 \n
 );
 
 const char *skyboxPS = STRINGIFY(
-samplerCube tex;
+uniform samplerCube tex;
 void main()                                                 \n
 {                                                           \n
   vec4 c = textureCube(tex, gl_TexCoord[0].xyz) * gl_Color; \n

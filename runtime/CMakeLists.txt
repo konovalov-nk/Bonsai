@@ -1,6 +1,6 @@
 
 
-CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.16)
 
 option(CUDA_VERBOSE_PTXAS
   "On to enable verbose output from the PTXAS assembler."
@@ -65,7 +65,7 @@ option(CUDA_KEEP_INTERMEDIATE_FILES
 
 FIND_PACKAGE(CUDA REQUIRED)
 
-add_definitions(-std=c++14)
+add_definitions(-std=c++17)
 set(EXTRA_MPI_LINK_FLAGS)
 if (USE_MPI)
   add_definitions(-DUSE_MPI)
@@ -79,7 +79,11 @@ endif (USE_MPI)
 if (USE_THRUST)
   add_definitions(-DUSE_THRUST)
 endif (USE_THRUST)
-include_directories(${CUDA_TOOLKIT_ROOT_DIR}/../../thrust)
+find_path(THRUST_INCLUDE_DIR thrust/device_ptr.h
+  HINTS ${CUDA_TOOLKIT_ROOT_DIR}/include/cccl /usr/include/cccl)
+if (THRUST_INCLUDE_DIR)
+  include_directories(${THRUST_INCLUDE_DIR})
+endif (THRUST_INCLUDE_DIR)
 
 if (USE_CUB)
     add_definitions(-DUSE_CUB)
@@ -242,7 +246,7 @@ if (USE_OPENGL)
 	  set( GLEW_NAME glew32 )
     endif( CMAKE_SIZEOF_VOID_P EQUAL 8 )
 	else (WIN32)
-		set( LIB_PATH ${CMAKE_SOURCE_DIR}/lib/linux )
+		set( LIB_PATH ${CMAKE_SOURCE_DIR}/lib/linux_fpic_glew )
 	  set( GLEW_NAME GLEW_x86_64 )
   endif (WIN32)
 
@@ -268,7 +272,7 @@ if (USE_OPENGL)
     set(ALL_LIBRARIES ${FREEGLUT_LIBRARY} ${GLEW_LIBRARY})
   else (WIN32)
     FIND_LIBRARY(GLU_LIBRARY NAMES GLU PATHS ${LIB_PATH})
-    set(ALL_LIBRARIES ${FREEGLUT_LIBRARY} ${GLEW_LIBRARY} ${GLU_LIBRARY} ${OPENGL_gl_LIBRARY} ${OPENGL_glu_LIBRARY})
+    set(ALL_LIBRARIES ${FREEGLUT_LIBRARY} ${GLEW_LIBRARY} ${GLU_LIBRARY} ${OPENGL_gl_LIBRARY} ${OPENGL_glu_LIBRARY} ${OPENGL_glx_LIBRARY} ${OPENGL_opengl_LIBRARY} -lX11)
   endif (WIN32)
 
   # Copy DLLs
@@ -310,7 +314,7 @@ cuda_add_executable(${BINARY_NAME}
   ${HFILES}
   ${CUFILES}
   ${PROFFILES}
-  OPTIONS ${GENCODE} ${VERBOSE_PTXAS} ${DEVICE_DEBUGGING} ${KEEP} -Xcompiler="-fPIE" -std=c++14
+  OPTIONS ${GENCODE} ${VERBOSE_PTXAS} ${DEVICE_DEBUGGING} ${KEEP} -Xcompiler="-fPIE" -std=c++17
   )
 
 
@@ -322,7 +326,7 @@ cuda_add_library(bonsai_amuse
   ${HFILES}
   ${CUFILES}
   ${PROFFILES}
-  OPTIONS ${GENCODE} ${VERBOSE_PTXAS} ${DEVICE_DEBUGGING} ${KEEP} -Xcompiler="-fPIE" -std=c++14
+  OPTIONS ${GENCODE} ${VERBOSE_PTXAS} ${DEVICE_DEBUGGING} ${KEEP} -Xcompiler="-fPIE" -std=c++17
   )
 
 
